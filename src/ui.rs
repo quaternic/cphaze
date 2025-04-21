@@ -1,5 +1,7 @@
 
 
+use std::panic::BacktraceStyle;
+
 use bevy::prelude::*;
 use bevy_egui::{egui::{self, Ui},EguiContexts};
 
@@ -133,6 +135,18 @@ pub fn ui_system(
         
         for mut cam in cams.iter_mut() {
             ui.add(&mut *cam);
+        }
+
+        if let Some(mut bt) = std::panic::get_backtrace_style() {
+            ui.collapsing("Backtraces", |ui| {
+                let old = bt;
+                ui.selectable_value(&mut bt, BacktraceStyle::Off, "Off");
+                ui.selectable_value(&mut bt, BacktraceStyle::Short, "Short");
+                ui.selectable_value(&mut bt, BacktraceStyle::Full, "Full");
+                if bt != old {
+                    std::panic::set_backtrace_style(bt);
+                }
+            });
         }
     });
 }

@@ -1,5 +1,5 @@
 
-use std::ops::Bound;
+use std::{ops::Bound, panic::{AssertUnwindSafe, BacktraceStyle}};
 
 use bevy::{
     prelude::*,
@@ -15,7 +15,7 @@ use bevy::{
 };
 use binding_types::uniform_buffer;
 
-use crate::func_xy::{FuncXY, InputPoints, ParticleMaterial};
+use crate::{func_xy::{FuncXY, InputPoints, ParticleMaterial}, PANIC_INFO};
 
 /// This example uses a shader source file from the assets subdirectory
 const SHADER_ASSET_PATH: &str = "shaders/updater.wgsl";
@@ -184,13 +184,36 @@ fn periodic_updates(
     updates.idxs = idxs;
 
     let mut r = vec![0.0; xs.len()];
+
+    PANIC_INFO.set(None);
     for FuncXY { id, zs } in &mut q_func {
-        crate::hot::test_batched(&xs, &ys, &mut r, *id);
+        let rs = AssertUnwindSafe(r.as_mut_slice());
+        if let Err(e) = std::panic::catch_unwind(|| {
+            let rs = rs;
+            crate::hot::test_batched(&xs, &ys, rs.0, *id)
+        }) {
+            if let Some((panic, bt)) = PANIC_INFO.replace(None) {
+                let style = std::panic::get_backtrace_style();
+                let mut bt_str = "Backtrace:".to_owned();
+                match (&bt, style) {
+                    (None, Some(BacktraceStyle::Off)) => bt_str.push_str(" disabled"),
+                    (None, None) => bt_str.push_str(" unsupported"),
+                    (Some(bt), Some(BacktraceStyle::Full)) => bt_str.push_str(&format!("\n{bt:#}")),
+                    (Some(bt), Some(BacktraceStyle::Short)) => bt_str.push_str(&format!("\n{bt:}")),
+                    _ => unreachable!(),
+                };
+                warn!("Panic in hot-reloaded code:\n{panic}\n{bt_str}\n");
+            } else {
+                warn!("Caught unwind but panic hook has not been run!");
+            }
+        }
         updates.updates.push((
             buffers.add(ShaderStorageBuffer::from(r.clone())),
             zs.clone()
         ));
     }
+    PANIC_INFO.set(Some((String::new(), None)));
+
     let xs = buffers.add(ShaderStorageBuffer::from(&xs));
     let ys = buffers.add(ShaderStorageBuffer::from(&ys));
     updates.updates.push((xs, inputs.xs.clone()));

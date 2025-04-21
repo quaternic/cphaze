@@ -1,9 +1,13 @@
 #![feature(new_range_api)]
 #![feature(btree_cursors)]
+#![feature(panic_update_hook)]
+#![feature(panic_backtrace_config)]
+#![feature(backtrace_frames)]
+
+use std::{backtrace::Backtrace, panic::BacktraceStyle};
 
 use bevy::{
-    prelude::*,
-    render,
+    app::PanicHandlerPlugin, prelude::*, render
 };
 use point_cloud::PointCloudPipelinePlugin;
 
@@ -51,7 +55,8 @@ fn main() {
         .add_plugins((
             DefaultPlugins
                 .set(taskpool)
-                .set(render),
+                .set(render)
+                .disable::<PanicHandlerPlugin>(),
             MaterialPlugin::<func_xy::ParticleMaterial>::default(),
             incremental::GpuReadbackPlugin,
             func_xy::PluginXY,
@@ -64,8 +69,34 @@ fn main() {
         .add_systems(Update, orbit_cam::orbit_camera)
 
         .add_systems(Startup, lines::setup)
+        .add_systems(Startup, || {
+            PANIC_INFO.set(Some((String::new(), None)));
+            std::panic::set_hook(Box::new(|info| {
+                PANIC_INFO.with(|stash| {
+                    let old = stash.take();
+                    if old.is_none() {
+                        let style = std::panic::get_backtrace_style();
+                        let bt = if let Some(BacktraceStyle::Full | BacktraceStyle::Short) = style {
+                            Some(std::backtrace::Backtrace::force_capture())
+                        } else {
+                            None
+                        };
+                        let s = format!("{info}",
+                        );
+                        stash.set(Some((s,bt)));
+                    } else {
+                        stash.set(old);
+                    }
+                });
+            }));
+        })
         .add_systems(Update, ui::ui_system)
         .run();
+}
+
+use std::cell::Cell;
+thread_local! {
+    static PANIC_INFO: Cell<Option<(String, Option<Backtrace>)>> = const { Cell::new(None) };
 }
 
 #[hot_lib_reloader::hot_module(dylib = "lib", file_watch_debounce = 50)]
